@@ -1,4 +1,19 @@
 #include <cstdio>
+#include <cstdlib>
+
+#define CUDA_CHECK(call)                                          \
+    do {                                                          \
+        cudaError_t err = (call);                                 \
+        if (err != cudaSuccess) {                                 \
+            fprintf(stderr, "CUDA error at %s:%d: %s\n",          \
+                    __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(1);                                              \
+        }                                                         \
+    } while (0)
+
+
+
+
 __global__ void vectorAdd(float* a,float*b,float*c,int N){
   int i = threadIdx.x + blockIdx.x * blockDim.x;
   if(i<N){
@@ -7,29 +22,48 @@ __global__ void vectorAdd(float* a,float*b,float*c,int N){
 }
 
 int main(){
-  int N = 8;
-  float a[] = {1,2,3,4,5,6,7,8};
-  float b[] = {10,20,30,40,50,60,70,80};
-  float z[8];
+  int N = 1<<20;
+  size_t bytes = N * sizeof(float);
+  float *a =(float*)malloc(bytes);
+  float *b =(float*)malloc(bytes);
+  float *z =(float*)malloc(bytes);
+  for (int i = 0; i < N; i++)
+  {
+    a[i] = i;
+    b[i] = i+2;
+  }
   float *d_a,*d_b,*d_z;
-  cudaMalloc((void**)&d_a,N*sizeof(float));
-  cudaMalloc((void**)&d_b,N*sizeof(float));
-  cudaMalloc((void**)&d_z,N*sizeof(float));
-  cudaMemcpy(d_a,a,N*sizeof(float),cudaMemcpyHostToDevice);
-  cudaMemcpy(d_b,b,N*sizeof(float),cudaMemcpyHostToDevice);
-  int threadsPerBlock = 4;
+  CUDA_CHECK(cudaMalloc((void**)&d_a,N*sizeof(float)));
+  CUDA_CHECK(cudaMalloc((void**)&d_b,N*sizeof(float)));
+  CUDA_CHECK(cudaMalloc((void**)&d_z,N*sizeof(float)));
+  CUDA_CHECK(cudaMemcpy(d_a,a,N*sizeof(float),cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_b,b,N*sizeof(float),cudaMemcpyHostToDevice));
+
+  
+
+  int threadsPerBlock = 256;
   int block = (N+threadsPerBlock-1)/threadsPerBlock;
   vectorAdd<<<block,threadsPerBlock>>>(d_a,d_b,d_z,N);
-  cudaMemcpy(z,d_z,N*sizeof(float),cudaMemcpyDeviceToHost);
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize()); 
+  CUDA_CHECK(cudaMemcpy(z,d_z,N*sizeof(float),cudaMemcpyDeviceToHost));
   for (int i = 0; i < N; i++)
     {
-        printf("%f ", z[i]);
+        if(z[i] != a[i] + b[i]){
+          printf("mismatch at index %d\n", i);
+          return 1;
+
+        }
     }
+  printf("everything is fine\n");
 
     // 9. Free GPU memory
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_z);
+    CUDA_CHECK(cudaFree(d_a));
+    CUDA_CHECK(cudaFree(d_b));
+    CUDA_CHECK(cudaFree(d_z));
+    free(a);
+    free(b);
+    free(z);
 
     return 0;
 }
