@@ -36,16 +36,52 @@ int main(){
   CUDA_CHECK(cudaMalloc((void**)&d_a,N*sizeof(float)));
   CUDA_CHECK(cudaMalloc((void**)&d_b,N*sizeof(float)));
   CUDA_CHECK(cudaMalloc((void**)&d_z,N*sizeof(float)));
+
+  cudaEvent_t start2,stop2;
+  CUDA_CHECK(cudaEventCreate(&start2));
+  CUDA_CHECK(cudaEventCreate(&stop2));
+  CUDA_CHECK(cudaEventRecord(start2));
   CUDA_CHECK(cudaMemcpy(d_a,a,N*sizeof(float),cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaEventRecord(stop2));
+  CUDA_CHECK(cudaEventSynchronize(stop2));
+  float ms2 = 0;
+  CUDA_CHECK(cudaEventElapsedTime(&ms2, start2, stop2));
+  printf("memcpy %.4f ms\n",ms2);
+  
+
   CUDA_CHECK(cudaMemcpy(d_b,b,N*sizeof(float),cudaMemcpyHostToDevice));
 
+  cudaEventDestroy(start2);
+  cudaEventDestroy(stop2);
   
 
   int threadsPerBlock = 256;
   int block = (N+threadsPerBlock-1)/threadsPerBlock;
+
+  cudaEvent_t start, stop;
+  CUDA_CHECK(cudaEventCreate(&start));      // make two markers
+  CUDA_CHECK(cudaEventCreate(&stop));
+
+  
   vectorAdd<<<block,threadsPerBlock>>>(d_a,d_b,d_z,N);
+  
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaDeviceSynchronize()); 
+
+  int runs = 20;
+  CUDA_CHECK(cudaEventRecord(start));
+  for(int i = 0;i<runs;i++){
+    vectorAdd<<<block, threadsPerBlock>>>(d_a, d_b, d_z, N);
+  }
+  CUDA_CHECK(cudaEventRecord(stop));
+  CUDA_CHECK(cudaEventSynchronize(stop));
+
+  CUDA_CHECK(cudaGetLastError());
+
+  float ms = 0;
+  CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+  float avg_ms = ms / runs;
+
   CUDA_CHECK(cudaMemcpy(z,d_z,N*sizeof(float),cudaMemcpyDeviceToHost));
   for (int i = 0; i < N; i++)
     {
@@ -55,7 +91,10 @@ int main(){
 
         }
     }
+  double gbps = (3.0 * bytes) / (avg_ms / 1000.0) / 1e9;
+  printf("kernel: %.4f ms, %.1f GB/s\n", avg_ms, gbps);
   printf("everything is fine\n");
+
 
     // 9. Free GPU memory
     CUDA_CHECK(cudaFree(d_a));
@@ -64,6 +103,8 @@ int main(){
     free(a);
     free(b);
     free(z);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
