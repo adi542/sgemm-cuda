@@ -1,8 +1,9 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>                     // NEW: gives us fabsf
 #include <cublas_v2.h>
+#include "kernels/01_naive.cuh"      // NEW: pulls in your naive kernel
 
-// Stops the program if a CUDA call fails (same as in vector_add)
 #define CUDA_CHECK(call)                                          \
     do {                                                          \
         cudaError_t err = (call);                                 \
@@ -13,7 +14,6 @@
         }                                                         \
     } while (0)
 
-// Same idea, but for cuBLAS calls
 #define CUBLAS_CHECK(call)                                        \
     do {                                                          \
         cublasStatus_t s = (call);                                \
@@ -24,40 +24,31 @@
         }                                                         \
     } while (0)
 
-int main() {
-    // ---------- 1. Matrix size ----------
+int main(){
     int N = 4096;
-    size_t bytes = (size_t)N * N * sizeof(float);
-
-    // ---------- 2. Make A and B on the CPU, fill with random numbers in [-1, 1] ----------
-    float *A = (float*)malloc(bytes);
-    float *B = (float*)malloc(bytes);
-    for (int i = 0; i < N * N; i++) {
-        A[i] = (float)rand() / RAND_MAX * 2.0f - 1.0f;
-        B[i] = (float)rand() / RAND_MAX * 2.0f - 1.0f;
+    size_t bytes = (size_t)N*N*sizeof(float);
+    float* A = (float*)malloc(bytes);
+    float* B = (float*)malloc(bytes);
+    for(int i = 0;i<N*N;i++){
+         A[i] = (float)rand() / RAND_MAX * 2.0f - 1.0f;
+         B[i] = (float)rand() / RAND_MAX * 2.0f - 1.0f;
     }
 
-    // ---------- 3. Make space on the GPU, copy A and B there ----------
-    float *d_A, *d_B, *d_C;
+    float *d_A,*d_B,*d_C,*d_C_mine;
     CUDA_CHECK(cudaMalloc(&d_A, bytes));
     CUDA_CHECK(cudaMalloc(&d_B, bytes));
-    CUDA_CHECK(cudaMalloc(&d_C, bytes));
+    CUDA_CHECK(cudaMalloc(&d_C, bytes));               
+    CUDA_CHECK(cudaMalloc(&d_C_mine, bytes));          
     CUDA_CHECK(cudaMemcpy(d_A, A, bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, B, bytes, cudaMemcpyHostToDevice));
 
-    // ---------- 4. Set up cuBLAS ----------
     cublasHandle_t handle;
     CUBLAS_CHECK(cublasCreate(&handle));
-    float alpha = 1.0f, beta = 0.0f;   // so it computes plain C = A x B
-
-    // ---------- 5. Warmup run (not timed) ----------
-    // Note: B is passed BEFORE A. That's the row-major trick.
+    float alpha=1.0f,beta=0.0f;
     CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, N, N,
                              &alpha, d_B, N, d_A, N, &beta, d_C, N));
     CUDA_CHECK(cudaDeviceSynchronize());
-
-    // ---------- 6. Time 10 runs with CUDA events ----------
-    cudaEvent_t start, stop;
+     cudaEvent_t start, stop;
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
 
@@ -74,19 +65,72 @@ int main() {
     CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
     float avg_ms = ms / runs;
 
-    // ---------- 7. Print time and GFLOPS ----------
-    double flops = 2.0 * N * N * N;    // 2N^3, using double so it doesn't overflow
+    // ---------- 7. Print cuBLAS time and GFLOPS ----------
+    double flops = 2.0 * N * N * N;
     double gflops = flops / (avg_ms / 1000.0) / 1e9;
     printf("cuBLAS  N=%d  %.3f ms  %.1f GFLOPS\n", N, avg_ms, gflops);
 
-    // ---------- 8. Clean up ----------
+    dim3 threads(32, 32);                              // 32 x 32 = 1024 threads per block
+    dim3 blocks((N + 31) / 32, (N + 31) / 32);         // enough blocks to cover all of C
+    sgemm_naive<<<blocks, threads>>>(N, d_A, d_B, d_C_mine);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    float *C_ref  = (float*)malloc(bytes);            
+    float *C_mine = (float*)malloc(bytes);             
+    CUDA_CHECK(cudaMemcpy(C_ref,  d_C,      bytes, cudaMemcpyDeviceToHost));
+    CUDA_CHECK(cudaMemcpy(C_mine, d_C_mine, bytes, cudaMemcpyDeviceToHost));
+
+    bool correct = true;
+
+    for (int i = 0; i < N * N; i++) {
+
+        if (fabsf(C_mine[i] - C_ref[i]) > 1e-2f) {
+            printf("naive: WRONG at index %d\n", i);
+            printf("cuBLAS = %f, naive = %f\n",
+                   C_ref[i], C_mine[i]);
+
+            correct = false;
+            break;
+        }
+    }
+
+    if (correct) {
+    printf("naive: correct\n");
+}
+
+
+    CUDA_CHECK(cudaEventRecord(start));
+    for (int r = 0; r < runs; r++) {
+        sgemm_naive<<<blocks, threads>>>(N, d_A, d_B, d_C_mine);
+    }
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+    CUDA_CHECK(cudaGetLastError());
+
+    float ms_naive = 0;
+    CUDA_CHECK(cudaEventElapsedTime(&ms_naive, start, stop));
+    float avg_naive = ms_naive / runs;
+    double gflops_naive = flops / (avg_naive / 1000.0) / 1e9;
+    printf("naive   N=%d  %.3f ms  %.1f GFLOPS  (%.1f%% of cuBLAS)\n",
+           N, avg_naive, gflops_naive, 100.0 * gflops_naive / gflops);
+    
+    
+    
+
+
+
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
     CUBLAS_CHECK(cublasDestroy(handle));
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));
+    CUDA_CHECK(cudaFree(d_C_mine));                    // NEW
     free(A);
     free(B);
+    free(C_ref);                                       // NEW
+    free(C_mine);                                      // NEW
     return 0;
+
+    
 }

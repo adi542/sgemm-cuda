@@ -7,7 +7,7 @@ bin/vector_add: warmup/vector_add.cu
 	mkdir -p bin
 	$(NVCC) $(FLAGS) -o bin/vector_add warmup/vector_add.cu
 
-bin/sgemm: src/main.cu
+bin/sgemm: src/main.cu src/kernels/*.cuh
 	mkdir -p bin
 	$(NVCC) $(FLAGS) -o bin/sgemm src/main.cu -lcublas
 
