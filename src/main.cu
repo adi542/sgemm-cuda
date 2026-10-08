@@ -3,6 +3,7 @@
 #include <cmath>                     // NEW: gives us fabsf
 #include <cublas_v2.h>
 #include "kernels/01_naive.cuh"      // NEW: pulls in your naive kernel
+#include "kernels/02_tiled.cuh"
 
 #define CUDA_CHECK(call)                                          \
     do {                                                          \
@@ -113,11 +114,55 @@ int main(){
     double gflops_naive = flops / (avg_naive / 1000.0) / 1e9;
     printf("naive   N=%d  %.3f ms  %.1f GFLOPS  (%.1f%% of cuBLAS)\n",
            N, avg_naive, gflops_naive, 100.0 * gflops_naive / gflops);
-    
-    
+
+    // ---------- 11. NEW: run tiled once (also the warmup) ----------
+    CUDA_CHECK(cudaMemset(d_C_mine, 0, bytes));
     
 
+    dim3 tthreads(TILE_SIZE, TILE_SIZE);
+    dim3 tblocks(N / TILE_SIZE, N / TILE_SIZE);
+    sgemm_tiled<<<tblocks, tthreads>>>(N, d_A, d_B, d_C_mine);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(C_mine, d_C_mine, bytes, cudaMemcpyDeviceToHost));
 
+    correct = true;
+    for (int i = 0; i < N * N; i++) {
+
+        if (fabsf(C_mine[i] - C_ref[i]) > 1e-2f) {
+            printf("tiled: WRONG at index %d\n", i);
+            printf("cuBLAS = %f, tilted = %f\n",
+                   C_ref[i], C_mine[i]);
+
+            correct = false;
+            break;
+        }
+    }
+
+    if (correct) {
+    printf("tilted: correct\n");
+}
+
+
+ CUDA_CHECK(cudaEventRecord(start));
+    for (int r = 0; r < runs; r++) {
+         sgemm_tiled<<<tblocks, tthreads>>>(N, d_A, d_B, d_C_mine);
+    }
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+    CUDA_CHECK(cudaGetLastError());
+
+    float ms_tiled = 0;
+    CUDA_CHECK(cudaEventElapsedTime(&ms_tiled, start, stop));
+    float avg_tiled = ms_tiled / runs;
+    double gflops_tiled = flops / (avg_tiled / 1000.0) / 1e9;
+    printf("tiled   N=%d  %.3f ms  %.1f GFLOPS  (%.1f%% of cuBLAS)\n",
+           N, avg_tiled, gflops_tiled, 100.0 * gflops_tiled / gflops);
+
+
+    
+    
+    
 
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
