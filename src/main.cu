@@ -4,6 +4,7 @@
 #include <cublas_v2.h>
 #include "kernels/01_naive.cuh"      // NEW: pulls in your naive kernel
 #include "kernels/02_tiled.cuh"
+#include "kernels/00_uncoalesced.cuh"
 
 #define CUDA_CHECK(call)                                          \
     do {                                                          \
@@ -140,7 +141,7 @@ int main(){
     }
 
     if (correct) {
-    printf("tilted: correct\n");
+    printf("tiled: correct\n");
 }
 
 
@@ -158,6 +159,50 @@ int main(){
     double gflops_tiled = flops / (avg_tiled / 1000.0) / 1e9;
     printf("tiled   N=%d  %.3f ms  %.1f GFLOPS  (%.1f%% of cuBLAS)\n",
            N, avg_tiled, gflops_tiled, 100.0 * gflops_tiled / gflops);
+
+
+
+
+    CUDA_CHECK(cudaMemset(d_C_mine, 0, bytes));
+    dim3 threads2(32,32);
+    dim3 blocks2((N + 31) / 32, (N + 31) / 32); 
+    sgemm_uncoalesced<<<blocks2,threads2>>>(N, d_A, d_B, d_C_mine);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+    CUDA_CHECK(cudaMemcpy(C_mine, d_C_mine, bytes, cudaMemcpyDeviceToHost));
+
+    correct = true;
+    for (int i = 0; i < N * N; i++) {
+
+        if (fabsf(C_mine[i] - C_ref[i]) > 1e-2f) {
+            printf("uncoalesced: WRONG at index %d\n", i);
+            printf("cuBLAS = %f, uncoalesced = %f\n",
+                   C_ref[i], C_mine[i]);
+
+            correct = false;
+            break;
+        }
+    }
+
+    if (correct) {
+    printf("uncoalesced: correct\n");
+}
+
+ CUDA_CHECK(cudaEventRecord(start));
+
+for (int r = 0; r < runs; r++) {
+         sgemm_uncoalesced<<<blocks2,threads2>>>(N, d_A, d_B, d_C_mine);
+    }
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+    CUDA_CHECK(cudaGetLastError());
+
+    float ms_uncoalesced = 0;
+    CUDA_CHECK(cudaEventElapsedTime(&ms_uncoalesced, start, stop));
+    float avg_uncoalesced = ms_uncoalesced / runs;
+    double gflops_uncoalesced = flops / (avg_uncoalesced / 1000.0) / 1e9;
+    printf("uncoalesced   N=%d  %.3f ms  %.1f GFLOPS  (%.1f%% of cuBLAS)\n",
+           N, avg_uncoalesced, gflops_uncoalesced, 100.0 * gflops_uncoalesced / gflops);
 
 
     
