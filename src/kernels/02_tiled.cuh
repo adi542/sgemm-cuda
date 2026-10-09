@@ -1,4 +1,3 @@
-
 #define TILE_SIZE 32
 __global__ void sgemm_tiled(int N,const float* A,const float* B,float* C){
     __shared__ float tileA[TILE_SIZE][TILE_SIZE];
