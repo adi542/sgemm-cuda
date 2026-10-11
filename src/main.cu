@@ -5,6 +5,7 @@
 #include "kernels/01_naive.cuh"      // NEW: pulls in your naive kernel
 #include "kernels/02_tiled.cuh"
 #include "kernels/00_uncoalesced.cuh"
+#include "kernels/03_blocktiling_1d.cuh"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -49,6 +50,12 @@ void run_kernel(int id, int N, const float* d_A, const float* d_B, float* d_C) {
             dim3 threads(TILE_SIZE, TILE_SIZE);
             dim3 blocks(N / TILE_SIZE, N / TILE_SIZE);
             sgemm_tiled<<<blocks, threads>>>(N, d_A, d_B, d_C);
+            break;
+        }
+        case 3: {
+            dim3 threads(512);
+            dim3 blocks(N / 64, N / 64);
+            sgemm_blocktiling_1d<<<blocks, threads>>>(N, d_A, d_B, d_C);
             break;
         }
         default:
@@ -148,8 +155,10 @@ int main(){
     float *C_mine = (float*)malloc(bytes);             
     CUDA_CHECK(cudaMemcpy(C_ref,  d_C,      bytes, cudaMemcpyDeviceToHost));
     
-    std::vector<std::string> names = {"uncoalesced", "naive", "tiled"};
-    int num_kernels = 3;
+    std::vector<std::string> names = {"uncoalesced", "naive", "tiled","blocktiling_1d"};
+
+    int num_kernels = 4;
+
     for(int i = 0;i<num_kernels;i++){
         CUDA_CHECK(cudaMemset(d_C_mine, 0, bytes));
         run_kernel(i, N, d_A, d_B, d_C_mine);
