@@ -8,3 +8,4 @@ Day 4: uncoalesced N=4096: ~1.4% of cuBLAS, ~10x slower than naive (coalescing)
 Day 4: tiled with TILE=16: 714 GFLOPS (17.7%), slower than TILE=32 (~900). More blocks didn't help; less reuse hurt.
 Day 6: blocktiling_1d N=4096: 73.5 ms, 1869 GFLOPS, 47.4% of cuBLAS (2.1x tiled)
 Day 8: blocktiling_2d N=4096: ~41-43 ms, ~3200-3350 GFLOPS, ~78-93% of cuBLAS across runs (~1.75x 1D blocktiling)
+Day 9: vectorized (kernel 6) N=4096: ~40 ms, ~3420 GFLOPS, ~87% of cuBLAS. No real gain over kernel 5: regs 124->102 but still 2 blocks/SM (cliff at 85); LDG 8->2 (LDG.E.128) but loads weren't the bottleneck.

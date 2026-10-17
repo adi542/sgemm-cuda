@@ -7,6 +7,7 @@
 #include "kernels/00_uncoalesced.cuh"
 #include "kernels/03_blocktiling_1d.cuh"
 #include "kernels/04_blocktiling_2d.cuh"
+#include "kernels/05_vectorized.cuh"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -64,6 +65,13 @@ void run_kernel(int id, int N, const float* d_A, const float* d_B, float* d_C) {
             dim3 blocks(N / 128, N / 128);
             sgemm_blocktiling_2d<<<blocks, threads>>>(N, d_A, d_B, d_C);
             break;
+        }
+        case 5 : {
+            dim3 threads(256);
+            dim3 blocks(N / 128, N / 128);
+            sgemm_blocktiling_2d<<<blocks, threads>>>(N, d_A, d_B, d_C);
+            break;
+            
         }
         default:
             printf("Unknown kernel id %d\n", id);
@@ -162,9 +170,9 @@ int main(){
     float *C_mine = (float*)malloc(bytes);             
     CUDA_CHECK(cudaMemcpy(C_ref,  d_C,      bytes, cudaMemcpyDeviceToHost));
     
-    std::vector<std::string> names = {"uncoalesced", "naive", "tiled","blocktiling_1d","blocktiling_2d"};
+    std::vector<std::string> names = {"uncoalesced", "naive", "tiled","blocktiling_1d","blocktiling_2d","vectorized_kernal_6"};
 
-    int num_kernels = 5;
+    int num_kernels = 6;
 
     for(int i = 0;i<num_kernels;i++){
         CUDA_CHECK(cudaMemset(d_C_mine, 0, bytes));
